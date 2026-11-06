@@ -1,0 +1,75 @@
+name: Build Android test APK
+
+on:
+  push:
+    branches:
+      - main
+    paths:
+      - 'BubbleRealmAdventure*.zip'
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  android-debug:
+    runs-on: ubuntu-latest
+    timeout-minutes: 45
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Extract Bubble Realm game source
+        shell: bash
+        run: |
+          set -euo pipefail
+          mapfile -t archives < <(find . -maxdepth 1 -type f -name 'BubbleRealmAdventure*.zip' | sort)
+          if [ "${#archives[@]}" -eq 0 ]; then
+            echo "::error::Game project ZIP is missing. Upload BubbleRealmAdventure_v1_0_0_GitHub_APK_BuildReady.zip to the repository root."
+            exit 1
+          fi
+          file="${archives[${#archives[@]}-1]}"
+          mkdir -p "$RUNNER_TEMP/game"
+          unzip -q "$file" -d "$RUNNER_TEMP/game"
+          project="$(find "$RUNNER_TEMP/game" -name settings.gradle.kts -type f -print -quit)"
+          if [ -z "$project" ]; then
+            echo "::error::The ZIP does not contain an Android Gradle project."
+            exit 1
+          fi
+          echo "GAME_DIR=$(dirname "$project")" >> "$GITHUB_ENV"
+          echo "Using project: $(dirname "$project")"
+
+      - name: Set up Java 17
+        uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: '17'
+
+      - name: Set up Android SDK
+        uses: android-actions/setup-android@v4
+
+      - name: Install Android SDK 36
+        run: sdkmanager 'platforms;android-36' 'build-tools;36.0.0'
+
+      - name: Set up Gradle 8.13
+        uses: gradle/actions/setup-gradle@v6
+        with:
+          gradle-version: '8.13'
+
+      - name: Compile debug APK
+        run: gradle --no-daemon --stacktrace --project-dir "$GAME_DIR" :app:assembleDebug
+
+      - name: Copy installable APK
+        shell: bash
+        run: |
+          set -euo pipefail
+          cp "$GAME_DIR/app/build/outputs/apk/debug/app-debug.apk" \
+             "$GITHUB_WORKSPACE/BubbleRealmAdventure-v1.0.0-test.apk"
+
+      - name: Upload Android APK artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: BubbleRealmAdventure-v1.0.0-APK
+          path: BubbleRealmAdventure-v1.0.0-test.apk
+          if-no-files-found: error
+          retention-days: 30
